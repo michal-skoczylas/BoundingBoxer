@@ -4,6 +4,8 @@ import sys
 import traceback
 from pathlib import Path
 
+from tqdm import tqdm
+
 from .config import CLASS_NAMES, OUTPUT_REPORT_JSON
 from .classifier import GestureClassifier
 from .detector import HandDetector
@@ -43,7 +45,7 @@ def run_pipeline(input_dir, output_dir, format="yolo", confidence_threshold=0.8)
 
     results = []
     with HandDetector() as detector:
-        for record in records:
+        for record in tqdm(records, desc="Processing"):
             try:
                 image = loader.load(record.path)
                 img_h, img_w = image.shape[:2]

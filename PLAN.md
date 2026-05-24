@@ -14,8 +14,8 @@ Potrzebny output: bounding boxy w formacie YOLO (opcjonalnie COCO).
 | 2 | Ekstrakcja i klasyfikacja | `extractor.py`, `classifier.py` | 45 min | done |
 | 3 | Eksport i raport | `exporter.py`, `reporter.py` | 30 min | done |
 | 4 | CLI | `main.py` | 20 min | done |
-| 5 | Streamlit UI | `review/app.py` | 1.5h | pending |
-| 6 | Testy i kalibracja | — | 30 min | pending |
+| 5 | Streamlit UI | `review/app.py` | 1.5h | done |
+| 6 | Testy i kalibracja | — | 30 min | done |
 
 ## Architektura — przepływ danych
 

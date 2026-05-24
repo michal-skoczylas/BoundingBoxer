@@ -2,7 +2,6 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import COMBINED_CONFIDENCE_THRESHOLD
 from .exporter import ProcessingResult
 
 
@@ -36,11 +35,8 @@ class Reporter:
             rec = result.image_record
             expected_class = rec.class_name
 
-            # needs_review logic
-            if not result.detections:
-                needs_review = expected_class != "none"
-            else:
-                needs_review = result.combined_confidence < COMBINED_CONFIDENCE_THRESHOLD
+            # needs_review — trust the value set by the pipeline orchestrator
+            needs_review = result.needs_review
 
             # bbox in YOLO format (first bbox only)
             if result.bboxes:

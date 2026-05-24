@@ -122,7 +122,7 @@ def result_without_detection():
         classification_confidence=0.0,
         mediapipe_confidence=0.0,
         combined_confidence=0.0,
-        needs_review=False,
+        needs_review=True,
     )
 
 
@@ -136,7 +136,7 @@ def result_low_confidence():
         combined_confidence=0.55,
         classification_confidence=0.6,
         mediapipe_confidence=0.5,
-        needs_review=False,
+        needs_review=True,
     )
 
 
@@ -417,6 +417,7 @@ class TestReporterGenerate:
             detected_class="closed_fist",
             detected_class_id=0,
             combined_confidence=0.95,
+            needs_review=False,
         )
         report = reporter.generate([result_high], input_dir)
         assert report["results"][0]["needs_review"] is False
@@ -427,6 +428,7 @@ class TestReporterGenerate:
             detected_class="closed_fist",
             detected_class_id=0,
             combined_confidence=0.55,
+            needs_review=True,
         )
         report = reporter.generate([result_low], input_dir)
         assert report["results"][0]["needs_review"] is True

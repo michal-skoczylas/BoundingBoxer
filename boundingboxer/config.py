@@ -9,10 +9,13 @@ CLASS_MAP = {
 }
 
 # Progi
-MEDIAPIPE_MIN_DETECTION_CONFIDENCE = 0.5
-MEDIAPIPE_MIN_TRACKING_CONFIDENCE = 0.5
+MEDIAPIPE_MIN_DETECTION_CONFIDENCE = 0.1
+MEDIAPIPE_MIN_TRACKING_CONFIDENCE = 0.3
 COMBINED_CONFIDENCE_THRESHOLD = 0.8   # poniżej → flagowane do recenzji
-BBOX_PADDING = 0.10                   # 10% marginesu na bounding box
+BBOX_PADDING = 0.15                   # 15% marginesu na bounding box
+
+# CLIP model
+CLIP_MODEL = "openai/clip-vit-base-patch32"
 
 # Model MediaPipe HandLandmarker
 HAND_LANDMARKER_MODEL_URL = (

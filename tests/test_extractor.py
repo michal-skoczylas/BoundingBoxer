@@ -7,7 +7,7 @@ import pytest
 
 from boundingboxer.config import BBOX_PADDING, CLASS_NAMES
 from boundingboxer.detector import HandDetection
-from boundingboxer.extractor import BBox, BBoxExtractor
+from boundingboxer.extractor import BBox, BBoxExtractor, crop_hand
 
 
 # ---------------------------------------------------------------------------
@@ -340,3 +340,21 @@ class TestBBoxExtractorToCoco:
         assert result["y"] in (10, 11)
         assert result["width"] in (15, 16)
         assert result["height"] in (20, 21)
+
+
+class TestCropHand:
+    def test_crops_region_from_image(self):
+        img = np.zeros((200, 300, 3), dtype=np.uint8)
+        img[50:100, 60:160] = 255
+        bbox = BBox(x=60, y=50, width=100, height=50)
+        crop = crop_hand(img, bbox)
+        assert crop.shape == (50, 100, 3)
+        assert np.all(crop == 255)
+
+    def test_clamps_to_image_boundaries(self):
+        img = np.zeros((100, 100, 3), dtype=np.uint8)
+        img[0:50, 0:50] = 128
+        bbox = BBox(x=-20, y=-20, width=200, height=200)
+        crop = crop_hand(img, bbox)
+        assert crop.shape == (100, 100, 3)
+        assert crop[0, 0, 0] == 128

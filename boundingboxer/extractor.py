@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 
+import cv2
+import numpy as np
+
 from .config import BBOX_PADDING
 from .detector import HandDetection
 
@@ -59,3 +62,15 @@ class BBoxExtractor:
             "width": round(bbox.width),
             "height": round(bbox.height),
         }
+
+
+def crop_hand(image: np.ndarray, bbox: BBox) -> np.ndarray:
+    """Crop the hand region from image using the bounding box.
+
+    Returns a BGR crop suitable for CLIP classification.
+    """
+    x1 = max(0, int(bbox.x))
+    y1 = max(0, int(bbox.y))
+    x2 = min(image.shape[1], int(bbox.x + bbox.width))
+    y2 = min(image.shape[0], int(bbox.y + bbox.height))
+    return image[y1:y2, x1:x2]

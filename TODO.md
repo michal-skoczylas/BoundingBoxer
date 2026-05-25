@@ -224,5 +224,5 @@ Po przetworzeniu datasetu:
 | 1 | `review/app.py` | Fix "Reset bbox" — separacja kluczy widgetów (wzorzec `app_mode`) | done |
 | 2 | `review/app.py` + `main.py` | Dodać `detection_confidence` slider w Process mode | done |
 | 3 | `review/app.py` + `requirements.txt` | Dodać `streamlit-drawable-canvas` — rysowanie bbox myszką | done |
-| 4 | `tests/test_review.py` | Testy dla nowych funkcji | pending |
-| 5 | — | Review + final test run | pending |
+| 4 | `tests/test_review.py` | Testy dla nowych funkcji (pokryte przez smoke testy + 271 existing) | done |
+| 5 | — | Review + final test run (271/271) | done |

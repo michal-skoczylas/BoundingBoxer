@@ -90,6 +90,8 @@ class TestRunPipelineBasic:
             "HandDetector": patch("boundingboxer.main.HandDetector"),
             "BBoxExtractor": patch("boundingboxer.main.BBoxExtractor"),
             "GestureClassifier": patch("boundingboxer.main.GestureClassifier"),
+            "ClipClassifier": patch("boundingboxer.main.ClipClassifier"),
+            "crop_hand": patch("boundingboxer.main.crop_hand"),
             "Exporter": patch("boundingboxer.main.Exporter"),
             "Reporter": patch("boundingboxer.main.Reporter"),
         }
@@ -98,7 +100,6 @@ class TestRunPipelineBasic:
         for name, p in self.patches.items():
             self.mocks[name] = p.start()
 
-        # Import the function under test *after* patching
         from boundingboxer.main import run_pipeline
         self.run_pipeline = run_pipeline
 
@@ -117,23 +118,21 @@ class TestRunPipelineBasic:
         detection = _dummy_detection(detection_score=0.95)
         bbox = _dummy_bbox()
 
-        # Mock ImageLoader
         mock_loader_instance = self.mocks["ImageLoader"].return_value
         mock_loader_instance.scan.return_value = [record]
         mock_loader_instance.load.return_value = _dummy_image(100, 100)
 
-        # Mock HandDetector (context manager)
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [detection]
+        mock_detector_ctx.detect_with_flip.return_value = [detection]
 
-        # Mock BBoxExtractor
+        self.mocks["crop_hand"].return_value = _dummy_image(60, 80)
+
         mock_extractor = self.mocks["BBoxExtractor"].return_value
         mock_extractor.extract.return_value = bbox
 
-        # Mock GestureClassifier
-        mock_classifier = self.mocks["GestureClassifier"].return_value
-        mock_classifier.classify.return_value = ("closed_fist", 0, 0.9)
+        mock_clip = self.mocks["ClipClassifier"].return_value
+        mock_clip.classify.return_value = ("closed_fist", 0, 0.9)
 
         # Mock Reporter
         mock_reporter = self.mocks["Reporter"].return_value
@@ -156,7 +155,7 @@ class TestRunPipelineBasic:
         # Assert HandDetector was used as context manager
         self.mocks["HandDetector"].assert_called_once()
         mock_detector_ctx.__enter__.assert_called_once()
-        mock_detector_ctx.detect.assert_called_once()
+        mock_detector_ctx.detect_with_flip.assert_called_once()
         mock_detector_ctx.__exit__.assert_called_once()
 
         # Assert BBoxExtractor.extract called with correct args
@@ -168,11 +167,8 @@ class TestRunPipelineBasic:
         )
 
         # Assert GestureClassifier.classify was called with landmarks
-        mock_classifier.classify.assert_called_once()
-        np.testing.assert_array_equal(
-            mock_classifier.classify.call_args[0][0],
-            detection.landmarks,
-        )
+        mock_clip.classify.assert_called_once()
+        assert mock_clip.classify.call_args[0][0] is self.mocks["crop_hand"].return_value
 
         # Assert Reporter methods called
         mock_reporter.generate.assert_called_once()
@@ -203,7 +199,7 @@ class TestRunPipelineBasic:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = []
+        mock_detector_ctx.detect_with_flip.return_value = []
 
         mock_reporter = self.mocks["Reporter"].return_value
         mock_reporter.generate.return_value = {"results": []}
@@ -242,11 +238,11 @@ class TestRunPipelineBasic:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [detection]
+        mock_detector_ctx.detect_with_flip.return_value = [detection]
 
         self.mocks["BBoxExtractor"].return_value.extract.return_value = bbox
         # Correct classification → multiplier = 1.0
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
 
         mock_reporter = self.mocks["Reporter"].return_value
         mock_reporter.generate.return_value = {"results": []}
@@ -273,10 +269,10 @@ class TestRunPipelineBasic:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [detection]
+        mock_detector_ctx.detect_with_flip.return_value = [detection]
 
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
 
         mock_reporter = self.mocks["Reporter"].return_value
         mock_reporter.generate.return_value = {"results": []}
@@ -304,11 +300,12 @@ class TestRunPipelineBasic:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [detection]
+        mock_detector_ctx.detect_with_flip.return_value = [detection]
 
+        self.mocks["crop_hand"].return_value = _dummy_image(60, 80)
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
         # Classifier returns "open_palm" but expected is "closed_fist" → mismatch
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("open_palm", 1, 0.9)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("open_palm", 1, 0.9)
 
         mock_reporter = self.mocks["Reporter"].return_value
         mock_reporter.generate.return_value = {"results": []}
@@ -317,8 +314,8 @@ class TestRunPipelineBasic:
 
         call_args = mock_reporter.generate.call_args
         pr = call_args[0][0][0]
-        assert pr.combined_confidence == pytest.approx(0.0)  # 0.95 * 0 (mismatch)
-        assert pr.needs_review is True
+        assert pr.combined_confidence == pytest.approx(0.95 * 0.9)
+        assert pr.needs_review is True  # mismatch triggers review
         assert pr.detected_class == "open_palm"
         assert pr.detected_class_id == 1
         assert pr.classification_confidence == 0.9
@@ -338,7 +335,7 @@ class TestRunPipelineBasic:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = []
+        mock_detector_ctx.detect_with_flip.return_value = []
 
         mock_reporter = self.mocks["Reporter"].return_value
         mock_reporter.generate.return_value = {"results": []}
@@ -369,10 +366,10 @@ class TestRunPipelineBasic:
         detection = _dummy_detection()
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [detection]
+        mock_detector_ctx.detect_with_flip.return_value = [detection]
 
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
 
         mock_reporter = self.mocks["Reporter"].return_value
         expected_report = {"results": []}
@@ -411,10 +408,10 @@ class TestRunPipelineBasic:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [detection]
+        mock_detector_ctx.detect_with_flip.return_value = [detection]
 
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
         self.mocks["Reporter"].return_value.generate.return_value = {"results": []}
 
         mock_exporter = self.mocks["Exporter"].return_value
@@ -442,10 +439,10 @@ class TestRunPipelineBasic:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [detection]
+        mock_detector_ctx.detect_with_flip.return_value = [detection]
 
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
 
         mock_reporter = self.mocks["Reporter"].return_value
         mock_reporter.generate.return_value = {"results": []}
@@ -485,7 +482,7 @@ class TestRunPipelineBasic:
         mock_detector.detect.return_value = [_dummy_detection()]
 
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
         self.mocks["Reporter"].return_value.generate.return_value = {"results": []}
 
         self.run_pipeline(self.input_dir, self.output_dir, self.format, self.threshold)
@@ -494,7 +491,7 @@ class TestRunPipelineBasic:
         mock_detector.__enter__.assert_called()
         mock_detector.__exit__.assert_called()
         # detect must have been called on the context-managed instance
-        mock_detector.detect.assert_called()
+        mock_detector.detect_with_flip.assert_called()
 
     # ------------------------------------------------------------------
     # Test 11: Image dimensions stored in ProcessingResult
@@ -512,10 +509,10 @@ class TestRunPipelineBasic:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [_dummy_detection()]
+        mock_detector_ctx.detect_with_flip.return_value = [_dummy_detection()]
 
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
 
         mock_reporter = self.mocks["Reporter"].return_value
         mock_reporter.generate.return_value = {"results": []}
@@ -542,12 +539,12 @@ class TestRunPipelineBasic:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [detection]
+        mock_detector_ctx.detect_with_flip.return_value = [detection]
 
         mock_extractor = self.mocks["BBoxExtractor"].return_value
         mock_extractor.extract.return_value = _dummy_bbox(class_id=1, class_name="open_palm")
 
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("open_palm", 1, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("open_palm", 1, 1.0)
         self.mocks["Reporter"].return_value.generate.return_value = {"results": []}
 
         self.run_pipeline(self.input_dir, self.output_dir, self.format, self.threshold)
@@ -582,6 +579,8 @@ class TestRunPipelineEdgeCases:
             "HandDetector": patch("boundingboxer.main.HandDetector"),
             "BBoxExtractor": patch("boundingboxer.main.BBoxExtractor"),
             "GestureClassifier": patch("boundingboxer.main.GestureClassifier"),
+            "ClipClassifier": patch("boundingboxer.main.ClipClassifier"),
+            "crop_hand": patch("boundingboxer.main.crop_hand"),
             "Exporter": patch("boundingboxer.main.Exporter"),
             "Reporter": patch("boundingboxer.main.Reporter"),
         }
@@ -628,10 +627,11 @@ class TestRunPipelineEdgeCases:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [detection]
+        mock_detector_ctx.detect_with_flip.return_value = [detection]
 
+        self.mocks["crop_hand"].return_value = _dummy_image(60, 80)
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 0.85)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 0.85)
 
         mock_reporter = self.mocks["Reporter"].return_value
         mock_reporter.generate.return_value = {"results": []}
@@ -642,7 +642,7 @@ class TestRunPipelineEdgeCases:
         pr = call_args[0][0][0]
         assert pr.classification_confidence == 0.85
         assert pr.mediapipe_confidence == 0.9
-        assert pr.combined_confidence == pytest.approx(0.9 * 1.0)  # correct classification
+        assert pr.combined_confidence == pytest.approx(0.9 * 0.85)
 
     def test_detection_score_stored_as_mediapipe_confidence(self):
         """HandDetection.detection_score must appear as ProcessingResult.mediapipe_confidence."""
@@ -655,10 +655,10 @@ class TestRunPipelineEdgeCases:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [detection]
+        mock_detector_ctx.detect_with_flip.return_value = [detection]
 
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
 
         mock_reporter = self.mocks["Reporter"].return_value
         mock_reporter.generate.return_value = {"results": []}
@@ -688,10 +688,10 @@ class TestRunPipelineEdgeCases:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [_dummy_detection()]
+        mock_detector_ctx.detect_with_flip.return_value = [_dummy_detection()]
 
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
         self.mocks["Reporter"].return_value.generate.return_value = {"results": []}
 
         call_args_list = []
@@ -716,10 +716,10 @@ class TestRunPipelineEdgeCases:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [_dummy_detection()]
+        mock_detector_ctx.detect_with_flip.return_value = [_dummy_detection()]
 
         self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
         self.mocks["Reporter"].return_value.generate.return_value = {"results": []}
 
         self.run_pipeline(
@@ -742,12 +742,12 @@ class TestRunPipelineEdgeCases:
 
         mock_detector_ctx = self.mocks["HandDetector"].return_value
         mock_detector_ctx.__enter__.return_value = mock_detector_ctx
-        mock_detector_ctx.detect.return_value = [_dummy_detection()]
+        mock_detector_ctx.detect_with_flip.return_value = [_dummy_detection()]
 
         mock_extractor = self.mocks["BBoxExtractor"].return_value
         mock_extractor.extract.side_effect = [RuntimeError("fail"), _dummy_bbox()]
 
-        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["ClipClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
         self.mocks["Reporter"].return_value.generate.return_value = {"results": []}
 
         call_args_list = []

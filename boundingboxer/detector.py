@@ -95,6 +95,27 @@ class HandDetector:
             )
         return detections
 
+    def detect_with_flip(self, image):
+        """Detect hands on original and horizontally flipped image.
+
+        Returns deduplicated list of HandDetection keeping the best score
+        for each handedness.
+        """
+        orig = self.detect(image)
+        flipped = cv2.flip(image, 1)
+        flip_results = self.detect(flipped)
+
+        for det in flip_results:
+            det.landmarks[:, 0] = 1.0 - det.landmarks[:, 0]
+            det.handedness = "Right" if det.handedness == "Left" else "Left"
+
+        best = {}
+        for det in orig + flip_results:
+            key = det.handedness
+            if key not in best or det.detection_score > best[key].detection_score:
+                best[key] = det
+        return list(best.values())
+
     def close(self):
         if self._landmarker is not None:
             self._landmarker.close()

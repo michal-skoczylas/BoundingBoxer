@@ -73,6 +73,15 @@ def _mock_empty_result():
     return result
 
 
+def _dummy_landmarks_array():
+    return np.array([[i / 21.0, (i % 7) / 7.0, 0.0] for i in range(21)],
+                    dtype=np.float32)
+    result = MagicMock()
+    result.hand_landmarks = []
+    result.handedness = []
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -628,8 +637,66 @@ class TestHandDetectorResourceCleanup:
             mock_instance = MagicMock()
             MockLandmarker.create_from_options.return_value = mock_instance
             detector = HandDetector()
-
             detector.close()
-            detector.close()  # second call must not crash
-
+            detector.close()
             assert mock_instance.close.call_count >= 1
+
+
+class TestDetectWithFlip:
+    """detect_with_flip() – augmented detection with horizontal mirror."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLM, \
+             patch("boundingboxer.detector._get_model_path", return_value="/f"):
+            MockLM.create_from_options.return_value = MagicMock()
+            self.detector = HandDetector()
+        self.image = np.zeros((100, 100, 3), dtype=np.uint8)
+
+    def test_returns_empty_for_no_detections(self):
+        with patch.object(self.detector, "detect", return_value=[]):
+            result = self.detector.detect_with_flip(self.image)
+            assert result == []
+
+    def test_calls_detect_twice(self):
+        with patch.object(self.detector, "detect", return_value=[]) as mock_d:
+            self.detector.detect_with_flip(self.image)
+            assert mock_d.call_count == 2
+
+    def test_deduplicates_by_best_score(self):
+        det_left = HandDetection(
+            landmarks=_dummy_landmarks_array(), handedness="Left", detection_score=0.8,
+        )
+        det_right = HandDetection(
+            landmarks=_dummy_landmarks_array(), handedness="Right", detection_score=0.6,
+        )
+        det_left_flipped = HandDetection(
+            landmarks=_dummy_landmarks_array(), handedness="Left", detection_score=0.4,
+        )
+
+        with patch.object(self.detector, "detect",
+                          side_effect=[[det_left, det_right], [det_left_flipped]]):
+            result = self.detector.detect_with_flip(self.image)
+            assert len(result) == 2
+            left = next(d for d in result if d.handedness == "Left")
+            assert left.detection_score == 0.8
+
+    def test_flips_x_coordinate_back(self):
+        lm = _dummy_landmarks_array()
+        x_before = lm[0, 0].copy()
+        det = HandDetection(landmarks=lm, handedness="Left", detection_score=0.9)
+
+        with patch.object(self.detector, "detect",
+                          side_effect=[[], [det]]):
+            result = self.detector.detect_with_flip(self.image)
+            assert len(result) == 1
+            assert result[0].landmarks[0, 0] == pytest.approx(1.0 - x_before)
+
+    def test_flipped_handedness_is_swapped(self):
+        det = HandDetection(
+            landmarks=_dummy_landmarks_array(), handedness="Right", detection_score=0.9,
+        )
+        with patch.object(self.detector, "detect",
+                          side_effect=[[], [det]]):
+            result = self.detector.detect_with_flip(self.image)
+            assert result[0].handedness == "Left"

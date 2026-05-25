@@ -1,14 +1,13 @@
 """Streamlit UI for BoundingBoxer — Process and Review modes."""
 import argparse
+import base64
+import json
 import sys
 from pathlib import Path
 
-# Allow running with `streamlit run app.py` directly (not just as a module)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
 import cv2
 import streamlit as st
-from streamlit_drawable_canvas import st_canvas
+import streamlit.components.v1 as components
 
 from boundingboxer.config import CLASS_NAMES
 from boundingboxer.main import run_pipeline
@@ -61,6 +60,77 @@ def _init_bbox_app_state(entry, img_w, img_h):
     st.session_state.app_class_override = (
         detected if detected in CLASS_NAMES else CLASS_NAMES[0]
     )
+
+
+def _render_canvas(bgr_image, current_idx, entry):
+    """Render an HTML5 canvas with mouse-drawn bounding box support.
+
+    Returns None or dict {x, y, w, h} (pixels) if user drew a rectangle.
+    """
+    img_h, img_w = bgr_image.shape[:2]
+    _, img_encoded = cv2.imencode(".jpg", bgr_image)
+    img_b64 = base64.b64encode(img_encoded).decode("utf-8")
+    img_src = f"data:image/jpeg;base64,{img_b64}"
+
+    color = "#00ff00" if entry["reviewed"] else "#ff0000"
+    bx = float(st.session_state.app_bbox_x)
+    by_ = float(st.session_state.app_bbox_y)
+    bw = float(st.session_state.app_bbox_w)
+    bh = float(st.session_state.app_bbox_h)
+
+    html = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;display:flex;justify-content:center;">
+<canvas id="c" width="{img_w}" height="{img_h}"
+ style="border:1px solid #444;cursor:crosshair;max-width:100%;height:auto;"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const img = new Image();
+img.onload = function() {{
+    ctx.drawImage(img, 0, 0);
+    if ({bw} > 0 && {bh} > 0) {{
+        ctx.strokeStyle = '{color}';
+        ctx.lineWidth = 2;
+        ctx.strokeRect({bx}, {by_}, {bw}, {bh});
+    }}
+}};
+img.src = '{img_src}';
+
+let drawing = false, sx, sy;
+canvas.onmousedown = function(e) {{
+    drawing = true;
+    sx = e.offsetX; sy = e.offsetY;
+}};
+canvas.onmousemove = function(e) {{
+    if (!drawing) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(Math.min(sx, e.offsetX), Math.min(sy, e.offsetY),
+                   Math.abs(e.offsetX - sx), Math.abs(e.offsetY - sy));
+}};
+canvas.onmouseup = function(e) {{
+    drawing = false;
+    let x = Math.min(sx, e.offsetX);
+    let y = Math.min(sy, e.offsetY);
+    let w = Math.abs(e.offsetX - sx);
+    let h = Math.abs(e.offsetY - sy);
+    window.parent.postMessage({{
+        type: 'streamlit:setComponentValue',
+        data: JSON.stringify({{x: x, y: y, w: w, h: h}})
+    }}, '*');
+}};
+</script>
+</body></html>"""
+
+    result = components.html(html, height=img_h + 10, scrolling=False)
+    if result:
+        try:
+            return json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return None
 
 
 def _render_process_mode():
@@ -191,44 +261,13 @@ def _render_review_mode():
         st.stop()
 
     img_h, img_w = bgr_image.shape[:2]
-    rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
 
-    color = "#00ff00" if entry["reviewed"] else "#ff0000"
-    initial_drawing = None
-    if (st.session_state.app_bbox_w > 0 and st.session_state.app_bbox_h > 0):
-        initial_drawing = {
-            "version": "4.4.0",
-            "objects": [{
-                "type": "rect",
-                "left": float(st.session_state.app_bbox_x),
-                "top": float(st.session_state.app_bbox_y),
-                "width": float(st.session_state.app_bbox_w),
-                "height": float(st.session_state.app_bbox_h),
-                "stroke": color,
-                "strokeWidth": 2,
-                "fill": "rgba(0,0,0,0)",
-            }],
-        }
-
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 255, 255, 0)",
-        stroke_width=2,
-        stroke_color="#00ff00",
-        background_image=rgb_image,
-        drawing_mode="rect",
-        initial_drawing=initial_drawing,
-        height=img_h,
-        width=img_w,
-        key=f"canvas_{current_idx}",
-    )
-
-    if (canvas_result.json_data is not None
-            and canvas_result.json_data.get("objects")):
-        obj = canvas_result.json_data["objects"][-1]
-        new_x = max(0, int(float(obj["left"])))
-        new_y = max(0, int(float(obj["top"])))
-        new_w = max(0, int(float(obj["width"])))
-        new_h = max(0, int(float(obj["height"])))
+    canvas_bbox = _render_canvas(bgr_image, current_idx, entry)
+    if canvas_bbox:
+        new_x = max(0, int(canvas_bbox["x"]))
+        new_y = max(0, int(canvas_bbox["y"]))
+        new_w = max(0, int(canvas_bbox["w"]))
+        new_h = max(0, int(canvas_bbox["h"]))
         if (new_x, new_y, new_w, new_h) != (
             st.session_state.app_bbox_x,
             st.session_state.app_bbox_y,

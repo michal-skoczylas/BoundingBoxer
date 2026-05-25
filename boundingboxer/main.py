@@ -8,9 +8,10 @@ from tqdm import tqdm
 
 from .config import CLASS_NAMES, OUTPUT_REPORT_JSON
 from .classifier import GestureClassifier
+from .clip_classifier import ClipClassifier
 from .detector import HandDetector
 from .exporter import Exporter, ProcessingResult
-from .extractor import BBoxExtractor
+from .extractor import BBoxExtractor, crop_hand
 from .loader import ImageLoader
 from .reporter import Reporter
 
@@ -33,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_pipeline(input_dir, output_dir, format="yolo", confidence_threshold=0.8,
-                 detection_confidence=0.5, progress_callback=None):
+                 detection_confidence=0.1, progress_callback=None):
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -42,8 +43,8 @@ def run_pipeline(input_dir, output_dir, format="yolo", confidence_threshold=0.8,
     records = loader.scan()
     total = len(records)
 
-    classifier = GestureClassifier()
     extractor = BBoxExtractor()
+    clip_classifier = ClipClassifier()
 
     results = []
     with HandDetector(min_detection_confidence=detection_confidence) as detector:
@@ -51,7 +52,7 @@ def run_pipeline(input_dir, output_dir, format="yolo", confidence_threshold=0.8,
             try:
                 image = loader.load(record.path)
                 img_h, img_w = image.shape[:2]
-                detections = detector.detect(image)
+                detections = detector.detect_with_flip(image)
 
                 bboxes = []
                 for det in detections:
@@ -62,10 +63,10 @@ def run_pipeline(input_dir, output_dir, format="yolo", confidence_threshold=0.8,
 
                 if detections:
                     det = detections[0]
-                    detected_class, detected_class_id, cls_conf = classifier.classify(det.landmarks)
+                    hand_crop = crop_hand(image, bboxes[0])
+                    detected_class, detected_class_id, cls_conf = clip_classifier.classify(hand_crop)
                     mp_conf = det.detection_score
-                    match = 1.0 if detected_class == record.class_name else 0.0
-                    combined_conf = mp_conf * match
+                    combined_conf = mp_conf * cls_conf
                 else:
                     detected_class = None
                     detected_class_id = None
@@ -75,7 +76,9 @@ def run_pipeline(input_dir, output_dir, format="yolo", confidence_threshold=0.8,
 
                 needs_review = (
                     (len(detections) == 0 and record.class_name != "none") or
-                    (len(detections) > 0 and combined_conf < confidence_threshold)
+                    (len(detections) > 0 and combined_conf < confidence_threshold) or
+                    (len(detections) > 0 and detected_class != record.class_name
+                     and record.class_name != "none")
                 )
 
                 results.append(ProcessingResult(

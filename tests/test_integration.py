@@ -182,19 +182,16 @@ def _detection(landmarks: np.ndarray, handedness: str = "Right",
 
 @pytest.fixture
 def mock_detector():
-    """Replace ``boundingboxer.main.HandDetector`` with a test double.
-
-    The mock supports the context-manager protocol and provides a ``detect()``
-    method whose ``side_effect`` can be configured per test.
-
-    Yields the mock **instance** so tests can set ``detect.side_effect``.
-    """
-    with patch("boundingboxer.main.HandDetector") as mock_cls:
+    with patch("boundingboxer.main.HandDetector") as mock_cls, \
+         patch("boundingboxer.main.ClipClassifier") as mock_clip_cls, \
+         patch("boundingboxer.main.crop_hand") as mock_crop:
         mock_inst = MagicMock()
         mock_inst.__enter__ = MagicMock(return_value=mock_inst)
         mock_inst.__exit__ = MagicMock(return_value=None)
         mock_inst.close = MagicMock()
         mock_cls.return_value = mock_inst
+        mock_clip_cls.return_value.classify.return_value = ("closed_fist", 0, 0.9)
+        mock_inst._clip_classify = mock_clip_cls.return_value.classify
         yield mock_inst
 
 
@@ -219,8 +216,14 @@ class TestPipelineEndToEnd:
 
         # scan order: sorted subdirs → closed_fist, none, open_palm
         #           → closed_fist×2, none×1, open_palm×1
-        mock_detector.detect.side_effect = [
+        mock_detector.detect_with_flip.side_effect = [
             [cf_det], [cf_det], [no_det], [op_det],
+        ]
+        mock_detector._clip_classify.side_effect = [
+            ("closed_fist", 0, 0.9),
+            ("closed_fist", 0, 0.9),
+            ("none", 2, 0.3),
+            ("open_palm", 1, 0.9),
         ]
 
         # --- Act --------------------------------------------------------------
@@ -315,8 +318,14 @@ class TestPipelineWithCocoFormat:
         op_det = _detection(_open_palm_landmarks())
         no_det = _detection(_none_landmarks())
         # scan order: closed_fist×2, none×1, open_palm×1
-        mock_detector.detect.side_effect = [
+        mock_detector.detect_with_flip.side_effect = [
             [cf_det], [cf_det], [no_det], [op_det],
+        ]
+        mock_detector._clip_classify.side_effect = [
+            ("closed_fist", 0, 0.9),
+            ("closed_fist", 0, 0.9),
+            ("none", 2, 0.3),
+            ("open_palm", 1, 0.9),
         ]
 
         report = run_pipeline(
@@ -390,8 +399,14 @@ class TestReportJsonStructure:
         op_det = _detection(_open_palm_landmarks())
         no_det = _detection(_none_landmarks())
         # scan order: closed_fist×2, none×1, open_palm×1
-        mock_detector.detect.side_effect = [
+        mock_detector.detect_with_flip.side_effect = [
             [cf_det], [cf_det], [no_det], [op_det],
+        ]
+        mock_detector._clip_classify.side_effect = [
+            ("closed_fist", 0, 0.9),
+            ("closed_fist", 0, 0.9),
+            ("none", 2, 0.3),
+            ("open_palm", 1, 0.9),
         ]
 
         run_pipeline(
@@ -465,8 +480,14 @@ class TestPipelineOutputStructure:
         op_det = _detection(_open_palm_landmarks())
         no_det = _detection(_none_landmarks())
         # scan order: closed_fist×2, none×1, open_palm×1
-        mock_detector.detect.side_effect = [
+        mock_detector.detect_with_flip.side_effect = [
             [cf_det], [cf_det], [no_det], [op_det],
+        ]
+        mock_detector._clip_classify.side_effect = [
+            ("closed_fist", 0, 0.9),
+            ("closed_fist", 0, 0.9),
+            ("none", 2, 0.3),
+            ("open_palm", 1, 0.9),
         ]
 
         run_pipeline(

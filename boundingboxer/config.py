@@ -14,6 +14,12 @@ MEDIAPIPE_MIN_TRACKING_CONFIDENCE = 0.5
 COMBINED_CONFIDENCE_THRESHOLD = 0.8   # poniżej → flagowane do recenzji
 BBOX_PADDING = 0.10                   # 10% marginesu na bounding box
 
+# Model MediaPipe HandLandmarker
+HAND_LANDMARKER_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/"
+    "hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
+)
+
 # Formaty eksportu
 SUPPORTED_EXPORT_FORMATS = ["yolo", "coco"]
 DEFAULT_EXPORT_FORMAT = "yolo"

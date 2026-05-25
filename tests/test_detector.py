@@ -6,6 +6,9 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+from mediapipe.tasks.python.components.containers.landmark import NormalizedLandmark
+from mediapipe.tasks.python.components.containers.category import Category
+
 from boundingboxer.config import (
     MEDIAPIPE_MIN_DETECTION_CONFIDENCE,
     MEDIAPIPE_MIN_TRACKING_CONFIDENCE,
@@ -14,12 +17,12 @@ from boundingboxer.detector import HandDetection, HandDetector
 
 
 # ---------------------------------------------------------------------------
-# Mock helpers – simulate MediaPipe internals
+# Mock helpers – simulate MediaPipe internals (new tasks API)
 # ---------------------------------------------------------------------------
 
 def _mock_landmark(x=0.1, y=0.2, z=-0.05):
-    """Return a MagicMock that mimics a MediaPipe NormalizedLandmark."""
-    lm = MagicMock()
+    """Return a real NormalizedLandmark with x, y, z set."""
+    lm = NormalizedLandmark()
     lm.x = x
     lm.y = y
     lm.z = z
@@ -27,47 +30,46 @@ def _mock_landmark(x=0.1, y=0.2, z=-0.05):
 
 
 def _mock_landmarks(n=21):
-    """Return a list of *n* mock NormalizedLandmark objects."""
+    """Return a list of *n* real NormalizedLandmark objects."""
     return [_mock_landmark(x=i / n, y=(i % 7) / 7, z=0.0) for i in range(n)]
 
 
-def _mock_classification(label="Left", score=0.95):
-    """Return a mock classification entry with label and score."""
-    cls = MagicMock()
-    cls.label = label
-    cls.score = score
-    return cls
+def _mock_category(label="Left", score=0.95):
+    """Return a real Category with category_name, score, and index."""
+    cat = Category()
+    cat.category_name = label
+    cat.score = score
+    cat.index = 0
+    return cat
 
 
 def _mock_handedness(label="Left", score=0.95):
-    """Return a list containing one mock handedness classification."""
-    h = MagicMock()
-    h.classification = [_mock_classification(label, score)]
-    return [h]
+    """Return a list containing one Category (per-hand handedness)."""
+    return [_mock_category(label, score)]
 
 
 def _mock_process_result(landmarks_list, handedness_list):
     """
-    Build a mock return value for hands.process().
+    Build a mock return value for HandLandmarker.detect().
 
     Parameters
     ----------
-    landmarks_list : list[list[Mock]]
+    landmarks_list : list[list[NormalizedLandmark]]
         One list of 21 landmarks per detected hand.
-    handedness_list : list[list[Mock]]
+    handedness_list : list[list[Category]]
         One handedness classification list per detected hand.
     """
     result = MagicMock()
-    result.multi_hand_landmarks = landmarks_list
-    result.multi_handedness = handedness_list
+    result.hand_landmarks = landmarks_list
+    result.handedness = handedness_list
     return result
 
 
 def _mock_empty_result():
-    """Return a mock result with no hands detected (both attributes None)."""
+    """Return a mock result with no hands detected (both attributes empty)."""
     result = MagicMock()
-    result.multi_hand_landmarks = None
-    result.multi_handedness = None
+    result.hand_landmarks = []
+    result.handedness = []
     return result
 
 
@@ -240,73 +242,83 @@ class TestHandDetectorConstruction:
 
     def test_default_construction_succeeds(self):
         """HandDetector can be instantiated with no arguments."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
-            MockHands.return_value = MagicMock()
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
+            MockLandmarker.create_from_options.return_value = MagicMock()
             detector = HandDetector()
             assert detector is not None
 
     def test_default_uses_config_detection_confidence(self):
         """When no value is given, MEDIAPIPE_MIN_DETECTION_CONFIDENCE is used."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
-            MockHands.return_value = MagicMock()
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
+            MockLandmarker.create_from_options.return_value = MagicMock()
             HandDetector()
-            call_kwargs = MockHands.call_args.kwargs
-            assert call_kwargs.get(
-                "min_detection_confidence"
-            ) == MEDIAPIPE_MIN_DETECTION_CONFIDENCE
+            options = MockLandmarker.create_from_options.call_args[0][0]
+            assert (
+                options.min_hand_detection_confidence
+                == MEDIAPIPE_MIN_DETECTION_CONFIDENCE
+            )
 
     def test_default_uses_config_tracking_confidence(self):
         """When no value is given, MEDIAPIPE_MIN_TRACKING_CONFIDENCE is used."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
-            MockHands.return_value = MagicMock()
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
+            MockLandmarker.create_from_options.return_value = MagicMock()
             HandDetector()
-            call_kwargs = MockHands.call_args.kwargs
-            assert call_kwargs.get(
-                "min_tracking_confidence"
-            ) == MEDIAPIPE_MIN_TRACKING_CONFIDENCE
+            options = MockLandmarker.create_from_options.call_args[0][0]
+            assert (
+                options.min_tracking_confidence
+                == MEDIAPIPE_MIN_TRACKING_CONFIDENCE
+            )
 
     def test_default_max_num_hands(self):
-        """Default max_num_hands should be 2 (both hands detectable)."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
-            MockHands.return_value = MagicMock()
+        """Default num_hands should be 2 (both hands detectable)."""
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
+            MockLandmarker.create_from_options.return_value = MagicMock()
             HandDetector()
-            call_kwargs = MockHands.call_args.kwargs
-            assert call_kwargs.get("max_num_hands") == 2
+            options = MockLandmarker.create_from_options.call_args[0][0]
+            assert options.num_hands == 2
 
     # ---- custom parameters -------------------------------------------
 
     def test_custom_detection_confidence(self):
-        """Custom min_detection_confidence is forwarded to MediaPipe."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
-            MockHands.return_value = MagicMock()
+        """Custom min_detection_confidence is forwarded to HandLandmarker."""
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
+            MockLandmarker.create_from_options.return_value = MagicMock()
             HandDetector(min_detection_confidence=0.7)
-            call_kwargs = MockHands.call_args.kwargs
-            assert call_kwargs.get("min_detection_confidence") == 0.7
+            options = MockLandmarker.create_from_options.call_args[0][0]
+            assert options.min_hand_detection_confidence == 0.7
 
     def test_custom_tracking_confidence(self):
-        """Custom min_tracking_confidence is forwarded to MediaPipe."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
-            MockHands.return_value = MagicMock()
+        """Custom min_tracking_confidence is forwarded to HandLandmarker."""
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
+            MockLandmarker.create_from_options.return_value = MagicMock()
             HandDetector(min_tracking_confidence=0.3)
-            call_kwargs = MockHands.call_args.kwargs
-            assert call_kwargs.get("min_tracking_confidence") == 0.3
+            options = MockLandmarker.create_from_options.call_args[0][0]
+            assert options.min_tracking_confidence == 0.3
 
     def test_custom_max_num_hands(self):
-        """Custom max_num_hands is forwarded to MediaPipe."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
-            MockHands.return_value = MagicMock()
+        """Custom max_num_hands is forwarded to HandLandmarker."""
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
+            MockLandmarker.create_from_options.return_value = MagicMock()
             HandDetector(max_num_hands=1)
-            call_kwargs = MockHands.call_args.kwargs
-            assert call_kwargs.get("max_num_hands") == 1
+            options = MockLandmarker.create_from_options.call_args[0][0]
+            assert options.num_hands == 1
 
     def test_static_image_mode_is_enabled(self):
-        """HandDetector must request static_image_mode=True for individual images."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
-            MockHands.return_value = MagicMock()
+        """HandDetector must request IMAGE running mode for individual images."""
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
+            MockLandmarker.create_from_options.return_value = MagicMock()
             HandDetector()
-            call_kwargs = MockHands.call_args.kwargs
-            assert call_kwargs.get("static_image_mode") is True, (
-                "Expected static_image_mode=True for single-image processing"
+            options = MockLandmarker.create_from_options.call_args[0][0]
+            assert options.running_mode is not None, (
+                "Expected running_mode to be set on HandLandmarkerOptions"
             )
 
 
@@ -321,8 +333,9 @@ class TestDetectInputValidation:
     @pytest.fixture
     def detector(self):
         """HandDetector with mocked MediaPipe backend."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
-            MockHands.return_value = MagicMock()
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
+            MockLandmarker.create_from_options.return_value = MagicMock()
             yield HandDetector()
 
     def test_raises_for_non_numpy_list(self, detector):
@@ -342,8 +355,8 @@ class TestDetectInputValidation:
 
     def test_accepts_valid_bgr_image(self, detector, sample_image):
         """A valid 3-channel uint8 ndarray is accepted — no exception raised."""
-        # We need to mock process return so it doesn't crash on real MediaPipe
-        detector._hands.process.return_value = _mock_empty_result()
+        # We need to mock detect return so it doesn't crash on real MediaPipe
+        detector._landmarker.detect.return_value = _mock_empty_result()
         try:
             detector.detect(sample_image)
         except Exception as exc:
@@ -360,10 +373,11 @@ class TestDetectIntegration:
 
     @staticmethod
     def _make_detector():
-        """Create a HandDetector with a fresh mock Hands instance."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
+        """Create a HandDetector with a fresh mock HandLandmarker instance."""
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
             mock_instance = MagicMock()
-            MockHands.return_value = mock_instance
+            MockLandmarker.create_from_options.return_value = mock_instance
             detector = HandDetector()
             return detector, mock_instance
 
@@ -371,8 +385,8 @@ class TestDetectIntegration:
 
     def test_detect_no_hands(self, sample_image):
         """When MediaPipe finds no hands, an empty list is returned."""
-        detector, mock_hands = self._make_detector()
-        mock_hands.process.return_value = _mock_empty_result()
+        detector, mock_landmarker = self._make_detector()
+        mock_landmarker.detect.return_value = _mock_empty_result()
 
         results = detector.detect(sample_image)
 
@@ -380,12 +394,12 @@ class TestDetectIntegration:
         assert len(results) == 0
 
     def test_detect_none_landmarks_returns_empty(self, sample_image):
-        """When multi_hand_landmarks is None, return empty list."""
-        detector, mock_hands = self._make_detector()
+        """When hand_landmarks is empty, return empty list."""
+        detector, mock_landmarker = self._make_detector()
         result = MagicMock()
-        result.multi_hand_landmarks = None
-        result.multi_handedness = None
-        mock_hands.process.return_value = result
+        result.hand_landmarks = []
+        result.handedness = []
+        mock_landmarker.detect.return_value = result
 
         results = detector.detect(sample_image)
 
@@ -395,12 +409,12 @@ class TestDetectIntegration:
 
     def test_detect_one_hand_left(self, sample_image):
         """Single left hand → one HandDetection with handedness='Left'."""
-        detector, mock_hands = self._make_detector()
+        detector, mock_landmarker = self._make_detector()
         mock_result = _mock_process_result(
             landmarks_list=[_mock_landmarks(21)],
-            handedness_list=_mock_handedness(label="Left", score=0.95),
+            handedness_list=[_mock_handedness(label="Left", score=0.95)],
         )
-        mock_hands.process.return_value = mock_result
+        mock_landmarker.detect.return_value = mock_result
 
         results = detector.detect(sample_image)
 
@@ -411,12 +425,12 @@ class TestDetectIntegration:
 
     def test_detect_one_hand_right(self, sample_image):
         """Single right hand → one HandDetection with handedness='Right'."""
-        detector, mock_hands = self._make_detector()
+        detector, mock_landmarker = self._make_detector()
         mock_result = _mock_process_result(
             landmarks_list=[_mock_landmarks(21)],
-            handedness_list=_mock_handedness(label="Right", score=0.88),
+            handedness_list=[_mock_handedness(label="Right", score=0.88)],
         )
-        mock_hands.process.return_value = mock_result
+        mock_landmarker.detect.return_value = mock_result
 
         results = detector.detect(sample_image)
 
@@ -429,15 +443,15 @@ class TestDetectIntegration:
 
     def test_detect_two_hands(self, sample_image):
         """Both hands detected → two HandDetection objects (Left + Right)."""
-        detector, mock_hands = self._make_detector()
+        detector, mock_landmarker = self._make_detector()
         mock_result = _mock_process_result(
             landmarks_list=[_mock_landmarks(21), _mock_landmarks(21)],
             handedness_list=[
-                _mock_handedness(label="Left", score=0.95)[0],
-                _mock_handedness(label="Right", score=0.91)[0],
+                _mock_handedness(label="Left", score=0.95),
+                _mock_handedness(label="Right", score=0.91),
             ],
         )
-        mock_hands.process.return_value = mock_result
+        mock_landmarker.detect.return_value = mock_result
 
         results = detector.detect(sample_image)
 
@@ -449,12 +463,12 @@ class TestDetectIntegration:
 
     def test_landmarks_extracted_as_ndarray_21x3(self, sample_image):
         """Each detection.landmarks must be a numpy array of shape (21, 3)."""
-        detector, mock_hands = self._make_detector()
+        detector, mock_landmarker = self._make_detector()
         mock_result = _mock_process_result(
             landmarks_list=[_mock_landmarks(21)],
-            handedness_list=_mock_handedness(label="Left", score=0.95),
+            handedness_list=[_mock_handedness(label="Left", score=0.95)],
         )
-        mock_hands.process.return_value = mock_result
+        mock_landmarker.detect.return_value = mock_result
 
         results = detector.detect(sample_image)
 
@@ -465,13 +479,13 @@ class TestDetectIntegration:
 
     def test_landmarks_contain_xyz_coordinates(self, sample_image):
         """Landmarks values are extracted from NormalizedLandmark x, y, z."""
-        detector, mock_hands = self._make_detector()
+        detector, mock_landmarker = self._make_detector()
         lm_list = [_mock_landmark(x=0.1, y=0.2, z=0.3) for _ in range(21)]
         mock_result = _mock_process_result(
             landmarks_list=[lm_list],
-            handedness_list=_mock_handedness(label="Right", score=0.8),
+            handedness_list=[_mock_handedness(label="Right", score=0.8)],
         )
-        mock_hands.process.return_value = mock_result
+        mock_landmarker.detect.return_value = mock_result
 
         results = detector.detect(sample_image)
 
@@ -485,16 +499,16 @@ class TestDetectIntegration:
 
     def test_landmarks_normalized_to_zero_one(self, sample_image):
         """Landmark x, y values must be within [0, 1] (MediaPipe convention)."""
-        detector, mock_hands = self._make_detector()
+        detector, mock_landmarker = self._make_detector()
         # Create landmarks with boundary values
         lm_list = [
             _mock_landmark(x=0.0, y=1.0, z=0.0),
         ] + [_mock_landmark(x=0.5, y=0.5, z=0.0) for _ in range(20)]
         mock_result = _mock_process_result(
             landmarks_list=[lm_list],
-            handedness_list=_mock_handedness(label="Left", score=0.9),
+            handedness_list=[_mock_handedness(label="Left", score=0.9)],
         )
-        mock_hands.process.return_value = mock_result
+        mock_landmarker.detect.return_value = mock_result
 
         results = detector.detect(sample_image)
 
@@ -505,13 +519,13 @@ class TestDetectIntegration:
     # ---- detection score extraction ----------------------------------
 
     def test_detection_score_extracted_correctly(self, sample_image):
-        """detection_score comes from the handedness classification score."""
-        detector, mock_hands = self._make_detector()
+        """detection_score comes from the handedness category score."""
+        detector, mock_landmarker = self._make_detector()
         mock_result = _mock_process_result(
             landmarks_list=[_mock_landmarks(21)],
-            handedness_list=_mock_handedness(label="Left", score=0.73),
+            handedness_list=[_mock_handedness(label="Left", score=0.73)],
         )
-        mock_hands.process.return_value = mock_result
+        mock_landmarker.detect.return_value = mock_result
 
         results = detector.detect(sample_image)
 
@@ -520,31 +534,32 @@ class TestDetectIntegration:
 
     def test_detection_score_is_float(self, sample_image):
         """detection_score must be a float, not numpy scalar or int."""
-        detector, mock_hands = self._make_detector()
+        detector, mock_landmarker = self._make_detector()
         mock_result = _mock_process_result(
             landmarks_list=[_mock_landmarks(21)],
-            handedness_list=_mock_handedness(label="Right", score=0.5),
+            handedness_list=[_mock_handedness(label="Right", score=0.5)],
         )
-        mock_hands.process.return_value = mock_result
+        mock_landmarker.detect.return_value = mock_result
 
         results = detector.detect(sample_image)
 
         det = results[0]
         assert isinstance(det.detection_score, float)
 
-    # ---- hands.process is called with RGB image ----------------------
+    # ---- landmarker.detect is called with Image object ----------------
 
-    def test_process_receives_rgb_image(self, sample_image):
-        """MediaPipe expects RGB; BGR input must be converted before process()."""
-        detector, mock_hands = self._make_detector()
-        mock_hands.process.return_value = _mock_empty_result()
+    def test_detect_receives_mediapipe_image(self, sample_image):
+        """detect() must be called with a mediapipe Image, not raw numpy array."""
+        detector, mock_landmarker = self._make_detector()
+        mock_landmarker.detect.return_value = _mock_empty_result()
 
         detector.detect(sample_image)
 
-        # The image passed to process() should be the RGB-converted version
-        call_arg = mock_hands.process.call_args[0][0]
-        assert call_arg is not sample_image, (
-            "Expected a copy/converted image, not the original BGR array"
+        # The argument passed to detect() should be a mediapipe Image
+        call_arg = mock_landmarker.detect.call_args[0][0]
+        from mediapipe.tasks.python.vision.core.image import Image
+        assert isinstance(call_arg, Image), (
+            f"Expected mediapipe Image, got {type(call_arg).__name__}"
         )
 
 
@@ -556,11 +571,12 @@ class TestDetectIntegration:
 class TestHandDetectorResourceCleanup:
     """HandDetector – close() and context-manager protocol."""
 
-    def test_close_calls_hands_close(self):
-        """close() must delegate to the underlying MediaPipe Hands.close()."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
+    def test_close_calls_landmarker_close(self):
+        """close() must delegate to the underlying HandLandmarker.close()."""
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
             mock_instance = MagicMock()
-            MockHands.return_value = mock_instance
+            MockLandmarker.create_from_options.return_value = mock_instance
             detector = HandDetector()
 
             detector.close()
@@ -569,8 +585,9 @@ class TestHandDetectorResourceCleanup:
 
     def test_context_manager_enter(self):
         """__enter__ must return self (standard context manager protocol)."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
-            MockHands.return_value = MagicMock()
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
+            MockLandmarker.create_from_options.return_value = MagicMock()
             detector = HandDetector()
 
             ctx_obj = detector.__enter__()
@@ -579,9 +596,10 @@ class TestHandDetectorResourceCleanup:
 
     def test_context_manager_exit_calls_close(self):
         """__exit__ must call close() (even on exception)."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
             mock_instance = MagicMock()
-            MockHands.return_value = mock_instance
+            MockLandmarker.create_from_options.return_value = mock_instance
             detector = HandDetector()
 
             detector.__exit__(None, None, None)
@@ -590,13 +608,14 @@ class TestHandDetectorResourceCleanup:
 
     def test_context_manager_with_statement(self):
         """HandDetector works with the 'with' statement."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
             mock_instance = MagicMock()
-            MockHands.return_value = mock_instance
+            MockLandmarker.create_from_options.return_value = mock_instance
 
             with HandDetector() as detector:
                 assert detector is not None
-                # Inside the block, Hands should be open
+                # Inside the block, landmarker should be open
                 mock_instance.close.assert_not_called()
 
             # After the block, close() must have been called
@@ -604,9 +623,10 @@ class TestHandDetectorResourceCleanup:
 
     def test_close_is_idempotent(self):
         """Calling close() multiple times should not raise errors."""
-        with patch("mediapipe.solutions.hands.Hands") as MockHands:
+        with patch("boundingboxer.detector.vision.HandLandmarker") as MockLandmarker, \
+             patch("boundingboxer.detector._get_model_path", return_value="/fake/model.task"):
             mock_instance = MagicMock()
-            MockHands.return_value = mock_instance
+            MockLandmarker.create_from_options.return_value = mock_instance
             detector = HandDetector()
 
             detector.close()

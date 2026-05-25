@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import shutil
 from pathlib import Path
 
 from .config import (
@@ -106,3 +107,14 @@ class Exporter:
             fh.write("names:\n")
             for i, name in enumerate(class_names):
                 fh.write(f"  {i}: {name}\n")
+
+    def export_images(self, results: list, output_dir) -> None:
+        """Copy source images to output_dir/images/<class_name>/<filename>."""
+        output_dir = Path(output_dir)
+        for result in results:
+            class_name = result.image_record.class_name
+            dst_dir = output_dir / OUTPUT_IMAGES_DIR / class_name
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            dst = dst_dir / result.image_record.path.name
+            if not dst.exists():
+                shutil.copy2(result.image_record.path, dst)

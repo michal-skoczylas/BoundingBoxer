@@ -1,17 +1,35 @@
 from dataclasses import dataclass
+from pathlib import Path
+import urllib.request
 
 import cv2
 import mediapipe as mp
 import numpy as np
+from mediapipe.tasks.python import vision
+from mediapipe.tasks.python.core import base_options
 
-from .config import MEDIAPIPE_MIN_DETECTION_CONFIDENCE, MEDIAPIPE_MIN_TRACKING_CONFIDENCE
+from .config import (
+    HAND_LANDMARKER_MODEL_URL,
+    MEDIAPIPE_MIN_DETECTION_CONFIDENCE,
+    MEDIAPIPE_MIN_TRACKING_CONFIDENCE,
+)
+
+
+def _get_model_path():
+    """Download hand_landmarker.task to user cache if not present."""
+    cache_dir = Path.home() / ".cache" / "boundingboxer"
+    model_path = cache_dir / "hand_landmarker.task"
+    if not model_path.exists():
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(HAND_LANDMARKER_MODEL_URL, model_path)
+    return str(model_path)
 
 
 @dataclass
 class HandDetection:
-    landmarks: np.ndarray
-    handedness: str
-    detection_score: float
+    landmarks: np.ndarray        # 21x3 (x, y, z) — normalized [0, 1]
+    handedness: str              # "Left" or "Right"
+    detection_score: float       # confidence from MediaPipe
 
     def __post_init__(self):
         if self.landmarks.shape != (21, 3):
@@ -35,41 +53,39 @@ class HandDetector:
         min_tracking_confidence=MEDIAPIPE_MIN_TRACKING_CONFIDENCE,
         max_num_hands=2,
     ):
-        self._hands = mp.solutions.hands.Hands(
-            static_image_mode=True,
-            max_num_hands=max_num_hands,
-            min_detection_confidence=min_detection_confidence,
+        model_path = _get_model_path()
+        options = vision.HandLandmarkerOptions(
+            base_options=base_options.BaseOptions(model_asset_path=model_path),
+            running_mode=vision.RunningMode.IMAGE,
+            num_hands=max_num_hands,
+            min_hand_detection_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence,
         )
+        self._landmarker = vision.HandLandmarker.create_from_options(options)
 
     def detect(self, image):
         if not isinstance(image, np.ndarray):
             raise TypeError(f"Expected numpy.ndarray, got {type(image).__name__}")
         if image.ndim == 2:
-            raise ValueError(
-                "Grayscale image is not supported; expected 3-channel BGR"
-            )
+            raise ValueError("Grayscale image is not supported; expected 3-channel BGR")
         if image.shape[-1] == 4:
-            raise ValueError(
-                "RGBA image is not supported; expected 3-channel BGR"
-            )
+            raise ValueError("RGBA image is not supported; expected 3-channel BGR")
 
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        results = self._hands.process(rgb)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        result = self._landmarker.detect(mp_image)
 
-        if results.multi_hand_landmarks is None:
+        if not result.hand_landmarks:
             return []
 
         detections = []
-        for hand_landmarks, handedness in zip(
-            results.multi_hand_landmarks, results.multi_handedness
-        ):
+        for landmarks, handedness_list in zip(result.hand_landmarks, result.handedness):
             lm_array = np.array(
-                [[lm.x, lm.y, lm.z] for lm in hand_landmarks],
+                [[lm.x, lm.y, lm.z] for lm in landmarks],
                 dtype=np.float32,
             )
-            label = handedness.classification[0].label
-            score = float(handedness.classification[0].score)
+            label = handedness_list[0].category_name
+            score = float(handedness_list[0].score)
             detections.append(
                 HandDetection(
                     landmarks=lm_array,
@@ -80,9 +96,9 @@ class HandDetector:
         return detections
 
     def close(self):
-        if self._hands is not None:
-            self._hands.close()
-            self._hands = None
+        if self._landmarker is not None:
+            self._landmarker.close()
+            self._landmarker = None
 
     def __enter__(self):
         return self

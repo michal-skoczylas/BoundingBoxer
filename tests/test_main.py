@@ -675,6 +675,94 @@ class TestRunPipelineEdgeCases:
 # ===================================================================
 
 
+    def test_progress_callback_called_with_correct_values(self):
+        """progress_callback must be called with (current, total) for each record."""
+        records = [
+            _dummy_record(path=f"/data/closed_fist/img{i:03d}.jpg")
+            for i in range(3)
+        ]
+
+        mock_loader_instance = self.mocks["ImageLoader"].return_value
+        mock_loader_instance.scan.return_value = records
+        mock_loader_instance.load.return_value = _dummy_image(100, 100)
+
+        mock_detector_ctx = self.mocks["HandDetector"].return_value
+        mock_detector_ctx.__enter__.return_value = mock_detector_ctx
+        mock_detector_ctx.detect.return_value = [_dummy_detection()]
+
+        self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
+        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["Reporter"].return_value.generate.return_value = {"results": []}
+
+        call_args_list = []
+        def progress_cb(current, total):
+            call_args_list.append((current, total))
+
+        self.run_pipeline(
+            self.input_dir, self.output_dir, self.format, self.threshold,
+            progress_callback=progress_cb,
+        )
+
+        assert len(call_args_list) == 3
+        assert call_args_list == [(1, 3), (2, 3), (3, 3)]
+
+    def test_progress_callback_none_does_not_crash(self):
+        """When progress_callback is None, pipeline runs without errors."""
+        record = _dummy_record()
+
+        mock_loader_instance = self.mocks["ImageLoader"].return_value
+        mock_loader_instance.scan.return_value = [record]
+        mock_loader_instance.load.return_value = _dummy_image(100, 100)
+
+        mock_detector_ctx = self.mocks["HandDetector"].return_value
+        mock_detector_ctx.__enter__.return_value = mock_detector_ctx
+        mock_detector_ctx.detect.return_value = [_dummy_detection()]
+
+        self.mocks["BBoxExtractor"].return_value.extract.return_value = _dummy_bbox()
+        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["Reporter"].return_value.generate.return_value = {"results": []}
+
+        self.run_pipeline(
+            self.input_dir, self.output_dir, self.format, self.threshold,
+        )
+
+        mock_reporter = self.mocks["Reporter"].return_value
+        mock_reporter.generate.assert_called_once()
+
+    def test_progress_callback_called_after_failed_image(self):
+        """progress_callback is called even when an image processing fails."""
+        records = [
+            _dummy_record(path="/data/closed_fist/img001.jpg"),
+            _dummy_record(path="/data/closed_fist/img002.jpg"),
+        ]
+
+        mock_loader_instance = self.mocks["ImageLoader"].return_value
+        mock_loader_instance.scan.return_value = records
+        mock_loader_instance.load.return_value = _dummy_image(100, 100)
+
+        mock_detector_ctx = self.mocks["HandDetector"].return_value
+        mock_detector_ctx.__enter__.return_value = mock_detector_ctx
+        mock_detector_ctx.detect.return_value = [_dummy_detection()]
+
+        mock_extractor = self.mocks["BBoxExtractor"].return_value
+        mock_extractor.extract.side_effect = [RuntimeError("fail"), _dummy_bbox()]
+
+        self.mocks["GestureClassifier"].return_value.classify.return_value = ("closed_fist", 0, 1.0)
+        self.mocks["Reporter"].return_value.generate.return_value = {"results": []}
+
+        call_args_list = []
+        def progress_cb(current, total):
+            call_args_list.append((current, total))
+
+        self.run_pipeline(
+            self.input_dir, self.output_dir, self.format, self.threshold,
+            progress_callback=progress_cb,
+        )
+
+        assert len(call_args_list) == 2
+        assert call_args_list == [(1, 2), (2, 2)]
+
+
 class TestBuildParser:
     """build_parser() – argparse configuration."""
 
@@ -790,13 +878,13 @@ class TestBuildParser:
     # Test 18: review requires --input
     # ------------------------------------------------------------------
 
-    def test_review_requires_input(self):
-        """review subcommand must require --input argument."""
+    def test_review_input_is_optional(self):
+        """review subcommand --input defaults to None when not provided."""
         parser = self.build_parser()
 
-        # Missing --input
-        with pytest.raises(SystemExit):
-            parser.parse_args(["review"])
+        # Without --input → success, input is None
+        args = parser.parse_args(["review"])
+        assert args.input is None
 
         # With --input → success
         args = parser.parse_args([

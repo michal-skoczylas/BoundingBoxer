@@ -1,9 +1,10 @@
 """Unit tests for Exporter component and ProcessingResult dataclass."""
 
 import json
+import shutil
 from dataclasses import is_dataclass
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -639,3 +640,134 @@ class TestExporterGenerateDatasetYaml:
 
         yaml_path = output_dir / OUTPUT_DATASET_YAML
         assert yaml_path.is_file()
+
+
+# ===================================================================
+# E.  Exporter.export_images()
+# ===================================================================
+
+
+class TestExporterExportImages:
+
+    @staticmethod
+    def _create_source_file(base_dir, rel_path, content=b"fake-image-data"):
+        full = base_dir / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_bytes(content)
+        return full
+
+    def test_creates_images_directory_and_copies_file(self, exporter, tmp_path):
+        output_dir = tmp_path / "export"
+        src_img = self._create_source_file(tmp_path, "source/closed_fist/img001.jpg")
+
+        result = _make_result(
+            image_record=ImageRecord(
+                path=src_img, class_name="closed_fist", class_id=0,
+            ),
+        )
+
+        exporter.export_images([result], output_dir)
+
+        expected_file = output_dir / OUTPUT_IMAGES_DIR / "closed_fist" / "img001.jpg"
+        assert expected_file.is_file()
+        assert expected_file.read_bytes() == b"fake-image-data"
+
+    def test_creates_parent_directories(self, exporter, tmp_path):
+        output_dir = tmp_path / "nested" / "deep" / "export"
+
+        src_img = self._create_source_file(tmp_path, "source/open_palm/img002.png")
+        result = _make_result(
+            image_record=ImageRecord(
+                path=src_img, class_name="open_palm", class_id=1,
+            ),
+        )
+
+        exporter.export_images([result], output_dir)
+
+        expected_file = output_dir / OUTPUT_IMAGES_DIR / "open_palm" / "img002.png"
+        assert expected_file.is_file()
+
+    def test_uses_shutil_copy2_with_correct_args(self, exporter, tmp_path):
+        output_dir = tmp_path / "export"
+        src_img = self._create_source_file(tmp_path, "source/closed_fist/img001.jpg")
+
+        result = _make_result(
+            image_record=ImageRecord(
+                path=src_img, class_name="closed_fist", class_id=0,
+            ),
+        )
+
+        with patch("boundingboxer.exporter.shutil.copy2") as mock_copy2:
+            exporter.export_images([result], output_dir)
+
+        mock_copy2.assert_called_once()
+        call_args = mock_copy2.call_args[0]
+        assert call_args[0] == src_img
+        expected_dest = output_dir / OUTPUT_IMAGES_DIR / "closed_fist" / "img001.jpg"
+        assert call_args[1] == expected_dest
+
+    def test_skips_when_destination_already_exists(self, exporter, tmp_path):
+        output_dir = tmp_path / "export"
+        src_img = self._create_source_file(tmp_path, "source/closed_fist/img001.jpg",
+                                           content=b"new-content")
+
+        dest_dir = output_dir / OUTPUT_IMAGES_DIR / "closed_fist"
+        dest_dir.mkdir(parents=True)
+        dest_file = dest_dir / "img001.jpg"
+        dest_file.write_bytes(b"old-content")
+
+        result = _make_result(
+            image_record=ImageRecord(
+                path=src_img, class_name="closed_fist", class_id=0,
+            ),
+        )
+
+        exporter.export_images([result], output_dir)
+
+        assert dest_file.read_bytes() == b"old-content"
+
+    def test_handles_multiple_results(self, exporter, tmp_path):
+        output_dir = tmp_path / "export"
+        src_a = self._create_source_file(tmp_path, "source/closed_fist/a.jpg", b"aaa")
+        src_b = self._create_source_file(tmp_path, "source/closed_fist/b.jpg", b"bbb")
+
+        results = [
+            _make_result(image_record=ImageRecord(
+                path=src_a, class_name="closed_fist", class_id=0,
+            )),
+            _make_result(image_record=ImageRecord(
+                path=src_b, class_name="closed_fist", class_id=0,
+            )),
+        ]
+
+        exporter.export_images(results, output_dir)
+
+        out_a = output_dir / OUTPUT_IMAGES_DIR / "closed_fist" / "a.jpg"
+        out_b = output_dir / OUTPUT_IMAGES_DIR / "closed_fist" / "b.jpg"
+        assert out_a.is_file()
+        assert out_b.is_file()
+        assert out_a.read_bytes() == b"aaa"
+        assert out_b.read_bytes() == b"bbb"
+
+    def test_different_classes_go_to_separate_subdirectories(self, exporter, tmp_path):
+        output_dir = tmp_path / "export"
+        src_cf = self._create_source_file(tmp_path, "source/closed_fist/cf.jpg", b"cf")
+        src_op = self._create_source_file(tmp_path, "source/open_palm/op.jpg", b"op")
+
+        results = [
+            _make_result(image_record=ImageRecord(
+                path=src_cf, class_name="closed_fist", class_id=0,
+            )),
+            _make_result(image_record=ImageRecord(
+                path=src_op, class_name="open_palm", class_id=1,
+            ),
+                detected_class="open_palm", detected_class_id=1,
+            ),
+        ]
+
+        exporter.export_images(results, output_dir)
+
+        cf_out = output_dir / OUTPUT_IMAGES_DIR / "closed_fist" / "cf.jpg"
+        op_out = output_dir / OUTPUT_IMAGES_DIR / "open_palm" / "op.jpg"
+        assert cf_out.is_file()
+        assert op_out.is_file()

@@ -26,26 +26,28 @@ def build_parser() -> argparse.ArgumentParser:
     process_parser.add_argument("--confidence", type=float, default=0.8)
 
     review_parser = subparsers.add_parser("review")
-    review_parser.add_argument("--input", required=True)
+    review_parser.add_argument("--input", default=None)
     review_parser.add_argument("--port", type=int, default=8501)
 
     return parser
 
 
-def run_pipeline(input_dir, output_dir, format="yolo", confidence_threshold=0.8):
+def run_pipeline(input_dir, output_dir, format="yolo", confidence_threshold=0.8,
+                 detection_confidence=0.5, progress_callback=None):
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     loader = ImageLoader(input_dir)
     records = loader.scan()
+    total = len(records)
 
     classifier = GestureClassifier()
     extractor = BBoxExtractor()
 
     results = []
-    with HandDetector() as detector:
-        for record in tqdm(records, desc="Processing"):
+    with HandDetector(min_detection_confidence=detection_confidence) as detector:
+        for i, record in enumerate(tqdm(records, desc="Processing"), start=1):
             try:
                 image = loader.load(record.path)
                 img_h, img_w = image.shape[:2]
@@ -93,11 +95,15 @@ def run_pipeline(input_dir, output_dir, format="yolo", confidence_threshold=0.8)
                 print(f"[WARNING] Skipping {record.path}:", file=sys.stderr)
                 traceback.print_exc(file=sys.stderr)
 
+            if progress_callback:
+                progress_callback(i, total)
+
     reporter = Reporter()
     report = reporter.generate(results, input_dir)
     reporter.save(report, output_dir / OUTPUT_REPORT_JSON)
 
     exporter = Exporter()
+    exporter.export_images(results, output_dir)
     if format == "yolo":
         exporter.export_yolo(results, output_dir)
     elif format == "coco":
@@ -122,8 +128,10 @@ def main():
     elif args.command == "review":
         streamlit_args = [
             "run", str(Path(__file__).parent / "review" / "app.py"),
-            "--", "--input", args.input, "--port", str(args.port),
+            "--", "--port", str(args.port),
         ]
+        if args.input:
+            streamlit_args.extend(["--input", args.input])
         import streamlit.web.cli as stcli
         sys.argv = ["streamlit"] + streamlit_args
         stcli.main()

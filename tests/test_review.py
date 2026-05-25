@@ -11,6 +11,7 @@ from boundingboxer.review.logic import (
     bbox_pixels_to_yolo,
     bbox_yolo_to_pixels,
     build_image_path,
+    build_summary_table,
     filter_results,
     load_report,
     save_report,
@@ -433,6 +434,123 @@ class TestBuildImagePath:
         """Return value is a pathlib.Path instance."""
         result = build_image_path(Path("/tmp/out"), "a.jpg")
         assert isinstance(result, Path)
+
+
+# =========================================================================
+# F.  build_summary_table()
+# =========================================================================
+
+
+class TestBuildSummaryTable:
+    """build_summary_table() — converting report dict to summary table rows."""
+
+    def test_empty_report(self):
+        """Empty report produces one row_total with zeros."""
+        report = _make_report([])
+        rows, row_all = build_summary_table(report)
+        assert rows == []
+        assert row_all["Class"] == "ALL"
+        assert row_all["Total"] == 0
+        assert row_all["Detected"] == 0
+        assert row_all["Not detected"] == 0
+        assert row_all["Avg confidence"] == "0.00"
+
+    def test_single_class_with_detections(self):
+        """One class with two detections produces correct summary row."""
+        entries = [
+            _make_entry(
+                image="a.jpg", expected_class="closed_fist",
+                detected=True, combined_confidence=0.90,
+            ),
+            _make_entry(
+                image="b.jpg", expected_class="closed_fist",
+                detected=True, combined_confidence=0.80,
+            ),
+        ]
+        report = _make_report(entries)
+        rows, row_all = build_summary_table(report)
+
+        assert len(rows) == 1
+        assert rows[0]["Class"] == "closed_fist"
+        assert rows[0]["Total"] == 2
+        assert rows[0]["Detected"] == 2
+        assert rows[0]["Not detected"] == 0
+        assert rows[0]["Avg confidence"] == "0.85"
+
+        assert row_all["Class"] == "ALL"
+        assert row_all["Total"] == 2
+        assert row_all["Detected"] == 2
+        assert row_all["Not detected"] == 0
+        assert row_all["Avg confidence"] == "0.85"
+
+    def test_mixed_classes_with_undetected(self):
+        """Multiple classes with some undetected entries."""
+        entries = [
+            _make_entry(image="a", expected_class="closed_fist",
+                        detected=True, combined_confidence=0.95),
+            _make_entry(image="b", expected_class="closed_fist",
+                        detected=False, combined_confidence=0.0),
+            _make_entry(image="c", expected_class="open_palm",
+                        detected=True, combined_confidence=0.70),
+            _make_entry(image="d", expected_class="open_palm",
+                        detected=False, combined_confidence=0.0),
+            _make_entry(image="e", expected_class="none",
+                        detected=False, combined_confidence=0.0),
+        ]
+        report = _make_report(entries)
+        rows, row_all = build_summary_table(report)
+
+        cf = next(r for r in rows if r["Class"] == "closed_fist")
+        assert cf["Total"] == 2
+        assert cf["Detected"] == 1
+        assert cf["Not detected"] == 1
+        assert cf["Avg confidence"] == "0.95"
+
+        op = next(r for r in rows if r["Class"] == "open_palm")
+        assert op["Total"] == 2
+        assert op["Detected"] == 1
+        assert op["Not detected"] == 1
+        assert op["Avg confidence"] == "0.70"
+
+        no = next(r for r in rows if r["Class"] == "none")
+        assert no["Total"] == 1
+        assert no["Detected"] == 0
+        assert no["Not detected"] == 1
+        assert no["Avg confidence"] == "0.00"
+
+        assert row_all["Total"] == 5
+        assert row_all["Detected"] == 2
+        assert row_all["Not detected"] == 3
+
+    def test_table_rows_are_dicts(self):
+        """Each row is a dict with string keys and expected value types."""
+        entries = [
+            _make_entry(image="a", expected_class="closed_fist",
+                        detected=True, combined_confidence=0.50),
+        ]
+        report = _make_report(entries)
+        rows, row_all = build_summary_table(report)
+
+        assert isinstance(rows, list)
+        assert isinstance(row_all, dict)
+        row = rows[0]
+        assert isinstance(row["Class"], str)
+        assert isinstance(row["Total"], int)
+        assert isinstance(row["Detected"], int)
+        assert isinstance(row["Not detected"], int)
+        assert isinstance(row["Avg confidence"], str)
+
+    def test_confidence_no_detections_shows_zero(self):
+        """When no entries are detected, avg confidence is '0.00'."""
+        entries = [
+            _make_entry(image="a", expected_class="closed_fist",
+                        detected=False, combined_confidence=0.0),
+        ]
+        report = _make_report(entries)
+        rows, row_all = build_summary_table(report)
+
+        assert rows[0]["Avg confidence"] == "0.00"
+        assert row_all["Avg confidence"] == "0.00"
 
 
 # =========================================================================

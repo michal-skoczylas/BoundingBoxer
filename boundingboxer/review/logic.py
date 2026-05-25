@@ -65,6 +65,31 @@ def bbox_pixels_to_yolo(x, y, width, height, img_w, img_h):
     return [cx, cy, w, h]
 
 
+def build_summary_table(report):
+    """Build per-class summary rows plus an aggregate "ALL" row from a report dict.
+
+    Returns (list[dict], dict): per-class rows and an aggregate "ALL" row.
+    """
+    summary = Reporter().get_summary(report)
+    rows = []
+    for class_name, stats in sorted(summary.per_class_stats.items()):
+        rows.append({
+            "Class": class_name,
+            "Total": stats.total,
+            "Detected": stats.detected,
+            "Not detected": stats.not_detected,
+            "Avg confidence": f"{stats.average_confidence:.2f}",
+        })
+    row_all = {
+        "Class": "ALL",
+        "Total": summary.total_images,
+        "Detected": summary.total_detected,
+        "Not detected": summary.total_not_detected,
+        "Avg confidence": f"{summary.average_confidence:.2f}",
+    }
+    return rows, row_all
+
+
 def build_image_path(input_dir, image_relative):
     """Build full image path: input_dir/images/<image_relative>."""
     input_dir = Path(input_dir)
